@@ -1,0 +1,32 @@
+{
+  "name": "resourceful-acl",
+  "version": "0.0.1",
+  "description": "resourceful_acl for express",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "test "
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/carney520/resourceful-acl.git"
+  },
+  "keywords": [
+    "RBAC",
+    "ACL",
+    "express",
+    "authorize",
+    "middleware"
+  ],
+  "author": "carney lee",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/carney520/resourceful-acl/issues"
+  },
+  "homepage": "https://github.com/carney520/resourceful-acl#readme",
+  "dependencies": {
+    "underscore": "^1.8.3"
+  }
+}
