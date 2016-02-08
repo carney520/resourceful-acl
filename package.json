@@ -7,7 +7,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "test "
+    "test": "mocha "
   },
   "repository": {
     "type": "git",
@@ -28,5 +28,9 @@
   "homepage": "https://github.com/carney520/resourceful-acl#readme",
   "dependencies": {
     "underscore": "^1.8.3"
+  },
+  "devDependencies": {
+    "chai": "^3.5.0",
+    "mocha": "^2.4.5"
   }
 }
