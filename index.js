@@ -108,7 +108,7 @@ exports.set = function(name,value){
  *  app.use(acl.authorize());
  *  ```
  *
- *  It will get user roles from 'req.user.role' on default,you also can define a function determine how to get the user role.
+ *  It will get user roles from 'req.user.role' on default,you also can define a function determine to get the user role.
  *  Then get request method from 'req.method' and get request path from 'req.path'
  *  //TODO
  *  req.acl
