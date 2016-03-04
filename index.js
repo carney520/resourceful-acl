@@ -1,4 +1,6 @@
-var _ = require('underscore');
+var _ = require('underscore'),
+    path = require('path');
+
 
 /** program entrance,it will initialize Access Control list,and set up options
  * 
@@ -11,6 +13,8 @@ var _ = require('underscore');
  *    },
  *    //if role non-existend,set 'reader' as default role
  *    default:'reader'
+ *    success_message: '已授权',
+ *    failure_message: '请登录'
  *   };
  *   
  *   var accessControlList = {
@@ -52,7 +56,7 @@ var _ = require('underscore');
  * @return {Object} some methods
  */
 
-module.exports = function(options,accessControlList){
+var Acl = function(options,accessControlList){
   if(arguments.length != 2){
     accessControlList = options;
     options={};
@@ -66,27 +70,26 @@ module.exports = function(options,accessControlList){
         callback(null,false);
     },
     default:'default',
+    success_message:'authorized',
+    failure_message:'authorize failed'
   };
 
+  
   //set up options
-  exports.options = {};
-  exports.options.get_role = options.get_role || default_options.get_role;
-  exports.options.default  = options.default  || default_options.default;
+  this.options = _.extend(default_options,options);
 
   //compile Access Control List
-  exports.__compiled = exports.permissionCompile(accessControlList);
-
-  return exports;
+  this.__compiled = permissionCompile(accessControlList);
 };
 
-var exports = module.exports;
+module.exports = Acl;
 
 
 /** get option
  * @param {String} name - option name
  * @return {String|Function} - option value
  */
-exports.get = function(name){
+Acl.prototype.get = function(name){
   return this.options[name];
 };
 
@@ -96,68 +99,128 @@ exports.get = function(name){
  * @param {String} name - option name
  * @param {Object} value - option value
  */
-exports.set = function(name,value){
+Acl.prototype.set = function(name,value){
   this.options[name] = value;
 };
 
 
 /** register express middleware
  *  ```
- *  var acl = require('resourceful-acl');
- *  acl(options,accessControlList);
- *  app.use(acl.authorize());
+ *  var Acl = require('resourceful-acl');
+ *  var acl= new Acl(
+ *  {
+ *    success_message:'authorized',
+ *    failure_message:'please login!'
+ *  },
+ *  accessControlList);
+ *  app.use(acl.authorize([callback]));
  *  ```
+ *
+ *  ### redirect
+ *  ```
+ *    app.use(acl.authorize({
+ *      failure_redirect:'/login',
+ *      flash:true,             //it dependent on 'req.flash()'
+ *    }));
+ *  ```
+ *
+ *  ##custom Callback
+ *
+ *  ```
+ *  app.use(function(req,res,next){
+ *    acl.authorize(function(err,info,status){
+ *      if(err){
+ *        req.flash('danger',info); //info === failure_message
+ *        res.redirect('/login');
+ *      }else{
+ *        next();
+ *      }
+ *    })(req,res,next);
+ *  });
+ *  ```
+ *
  *
  *  It will get user roles from 'req.user.role' on default,you also can define a function determine to get the user role.
  *  Then get request method from 'req.method' and get request path from 'req.path'
- *  //TODO
- *  req.acl
- *  not_matched
+ *  get check result from `req.acl`
  *
  * @return {Function} return an express middleware
  */
-exports.authorize = function(){
-  var that = exports;
+Acl.prototype.authorize = function(option){
+  var that = this,
+      redirect,
+      custom_callback;
+
+  if(option){
+    if(_.isObject(option) && option.failure_redirect){
+      redirect = option;
+    }else if(_.isFunction(option)){
+      custom_callback = option;
+    }else{
+      throw new TypeError('Argument Error: expect an Object or a Function');
+    }
+  }
+
   return function(req,res,next){
-    var user_role = that.get("default"),
-        req_path = req.path,
-        req_method = req.method.toLowerCase(),
-        result = null,
+    var user_role,                                   //角色名
+        req_path = path.join(req.baseUrl,req.path),  //请求路径
+        req_method = req.method.toLowerCase(),       //请求方法
+        result = null,                               //结果
         start_match = Date.now();
+
     //get user role
     that.get("get_role")(req,function(err,role){
       if(err || role === false){
-        user_role = that.get("default");
+        user_role = that.get("default"); //默认角色
       }else{
         user_role = role;
       }
-    });
 
-    if(_.isArray(user_role)){
-      //check roles one by one
-      for(var i = 0;i < user_role.length; i++){
-        result = that.check(user_role[i],req_path,req_method);
-        if(result.status === 'allowed' || result.status === 'role_non_existend'){
-          break;
+      //一个用户拥有多个角色
+      if(_.isArray(user_role)){
+        //check roles one by one
+        for(var i = 0;i < user_role.length; i++){
+          result = that.check(user_role[i],req_path,req_method);
+          if(result.status === 'allowed' || result.status === 'role_undefined'){
+            break;
+          }
+        }
+      }else{
+        result = that.check(user_role,req_path,req_method);
+      }
+
+      req.acl = result;
+      req.acl.times = Date.now() - start_match;
+      if(result.status === 'allowed' || result.status === 'not_matched'){
+        if(option && custom_callback){
+          custom_callback(null,that.get('success_message'),result.status);
+        }else{
+          next();
         }
       }
-    }else{
-      result = that.check(user_role,req_path,req_method);
-    }
-
-    req.acl = result;
-    req.acl.times = (Date.now() - start_match)/1000;
-    if(result.status === 'allowed' || result.status === 'not_matched'){
-      next();
-    }
-    else{
-      var err= new Error('Unauthorized');
-      err.code = 403;
-      err.status = result.status;
-      err.role = result.role;
-      err.resource = result.resource;
-      return next(err);
-    }
+      else{
+        err= new Error('Unauthorized');
+        err.code = 403;
+        err.status = result.status;
+        err.role = result.role;
+        err.resource = result.resource;
+        if(option){
+          if(redirect){ //跳转
+            if(redirect.flash && req.flash){
+              if(_.isString(redirect.flash))
+                req.flash('danger',redirect.flash);
+              else
+                req.flash('danger',that.get('failure_message'));
+            }
+            return res.redirect(303,redirect.failure_redirect);
+          }else if(custom_callback){
+            return custom_callback(err,that.get('failure_message'),result.status);
+          }
+        }
+        return next(err);
+      }
+      //end of get_role
+    });
   };
 };
 
@@ -182,16 +245,18 @@ var toPath = function(resource){
   return path;
 };
 
-var methodIsAllow = function(resource,req_method,role){
+Acl.prototype.methodIsAllow = function(resource,req_method,role){
   //handle nested resource
+  //检查父资源
   if(resource.belongs_to){
     if(isView(req_method)){
+      //读操作，必须对父资源有可读权限
       //must have right to view descend resource
-      if(exports.check(role,toPath(resource.belongs_to),"view").status != "allowed")
+      if(this.check(role,toPath(resource.belongs_to),"view").status != "allowed")
         return false;
     }else if(isEdit(req_method) || isDelete(req_method)){
       //must have right to edit descend resource
-      if(exports.check(role,toPath(resource.belongs_to),"edit").status != "allowed")
+      if(this.check(role,toPath(resource.belongs_to),"edit").status != "allowed")
         return false;
     }
   }
@@ -213,7 +278,7 @@ var methodIsAllow = function(resource,req_method,role){
     return false;
 };
 
-exports.methodMap = function(methods){
+var methodMap = function(methods){
   var map = {
     view:['get','head','options'],
     edit:['put','post','patch'],
@@ -233,7 +298,8 @@ exports.methodMap = function(methods){
   }
 };
 
-exports.getResourcePath = function(resource){
+//将资源名转换成正则表达式
+var getResourcePath = function(resource){
   var path = "";
   var belongs_to = null;
   var priority = 1;
@@ -263,7 +329,8 @@ exports.getResourcePath = function(resource){
   };
 };
 
-exports.permissionCompile = function(assignments){
+//编译访问控制列表
+var permissionCompile = function(assignments){
   var compiled = {};
   for(var role in assignments){
     var roleParent = assignments[role].extends || null;
@@ -287,7 +354,7 @@ exports.permissionCompile = function(assignments){
       var priority = 1;
 
       if(!path){
-        resourcePath = this.getResourcePath(resource);
+        resourcePath = getResourcePath(resource);
         path = resourcePath.path;
         belongs_to = resourcePath.belongs_to;
         priority = resourcePath.priority;
@@ -295,7 +362,7 @@ exports.permissionCompile = function(assignments){
 
       _curRes.path = _.isRegExp(path) ? path : new RegExp(path,'i');
       _curRes.name = resource;
-      _curRes.methods = this.methodMap(methods);
+      _curRes.methods = methodMap(methods);
       _curRes.belongs_to = belongs_to;
       _curRes.priority = priority;
       compiled[role].resources.push(_curRes);
@@ -305,33 +372,35 @@ exports.permissionCompile = function(assignments){
   return compiled;
 };
 
-exports.check = function(role,req_path,req_method){
-  var compiled = exports.__compiled;
-  var parents = compiled[role] && compiled[role].parents;
+Acl.prototype.check = function(role,req_path,req_method){
+  var compiled = this.__compiled;
+  var parents = compiled[role] && compiled[role].parents; //角色的父类
   var i,result,resources,resource;
   var response = {
-    "status":null,
-    "role":role,
-    "resource":null,
-    "path":req_path,
-    "method":req_method,
+    "status":null,           //检查的状态
+    "role":role,             //当前检查的角色
+    "resource":null,         //匹配的资源
+    "path":req_path,         //请求路径
+    "method":req_method,     //请求方法
   };
 
   //check role
   if(!compiled[role]){
-    response.status = "role_non_existend";
+    response.status = "role_undefined";  //角色不存在,访问控制列表定义出错
     return response;
   }
 
   //check parents of role
   if(parents){
+    //检查父角色，如果父角色通过则通过
     for(i = 0; i < parents.length; i++){
-      result = exports.check(parents[i],req_path,req_method);
+      result = this.check(parents[i],req_path,req_method);
       if(result.status === "allowed")
         return result;
     }
   }
 
+  //检查定义的资源
   resources = compiled[role].resources;
   for(i = resources.length - 1; i >= 0; i--){
     resource = resources[i];
@@ -339,7 +408,8 @@ exports.check = function(role,req_path,req_method){
       response.resource = resource.name;
       //match the resource
 
-      if(methodIsAllow(resource,req_method,role)){
+      //检查方法是否允许
+      if(this.methodIsAllow(resource,req_method,role)){
         //allowed
         response.status = "allowed";
         return response;
